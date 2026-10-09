@@ -1,0 +1,1116 @@
+Telegram Bot Technical Framework
+
+Public User Menu + Admin Configuration
+
+1. Architecture Objective
+
+The bot operates with two distinct access levels:
+
+                    TELEGRAM BOT
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+             ▼                       ▼
+       PUBLIC USER LAYER       ADMIN LAYER
+             │                       │
+         /start                    /admin
+             │                       │
+             ▼                       ▼
+       User Main Menu         Admin Dashboard
+             │                       │
+       Callback Handlers      Admin Callbacks
+             │                       │
+             ▼                       ▼
+      Public Functions       Configuration
+
+All Telegram users can trigger "/start".
+
+Only authorized channel owners/administrators can access configuration functionality.
+
+---
+
+2. Access Control Model
+
+The bot should distinguish at least three identities:
+
+USER
+ADMIN
+OWNER
+
+Recommended permission hierarchy:
+
+OWNER
+  │
+  ├── Full configuration access
+  ├── Manage admins
+  ├── Manage channels
+  ├── Manage groups
+  ├── Manage forwarding
+  ├── Manage filters
+  └── Manage bot settings
+       │
+       ▼
+ADMIN
+  │
+  ├── Configuration access according to permissions
+  ├── Manage forwarding
+  ├── Manage destinations
+  └── Manage filters
+       │
+       ▼
+USER
+  │
+  ├── /start
+  ├── Public menu
+  ├── Public callbacks
+  └── Public bot functions
+
+Do not assume that a Telegram user who can interact with the bot is an administrator.
+
+---
+
+3. "/start" Entry Point
+
+Every user should be able to send:
+
+/start
+
+The bot determines the user's access level.
+
+User
+
+/start
+   │
+   ▼
+Authorization Check
+   │
+   ▼
+USER
+   │
+   ▼
+Public Main Menu
+
+Admin
+
+/start
+   │
+   ▼
+Authorization Check
+   │
+   ▼
+ADMIN
+   │
+   ▼
+Public Main Menu
++
+Admin access where appropriate
+
+It is generally preferable that "/start" does not expose sensitive configuration merely because someone knows the command.
+
+---
+
+4. Public Main Menu
+
+Example:
+
+🤖 Welcome to the bot
+
+Choose an option:
+
+[ 📢 Channel ]
+[ 📚 Content ]
+[ ℹ️ Information ]
+[ 🆘 Help ]
+
+These buttons use public callback handlers.
+
+Example callback identifiers:
+
+menu:channel
+menu:content
+menu:info
+menu:help
+
+Anyone can trigger them.
+
+---
+
+5. Admin Menu
+
+Administrators should have a separate configuration entry point.
+
+Example:
+
+⚙️ Administration
+
+[ 📣 Forwarding ]
+[ 🎯 Destinations ]
+[ 🔣 Filters ]
+[ ✍️ Auto-complete ]
+[ 🤖 Custom Bot ]
+[ 📊 Event Log ]
+[ 👥 Administrators ]
+[ ⚙️ Settings ]
+
+The "/admin" command can be used as an explicit entry point.
+
+However, the bot must perform authorization every time, not merely hide the button.
+
+---
+
+6. Critical Security Rule
+
+Never implement authorization as:
+
+if callback_data == "admin:settings":
+    show_settings()
+
+Instead:
+
+if callback_data == "admin:settings":
+    if not is_authorized_admin(user):
+        deny_access()
+        return
+
+    show_settings()
+
+The same principle applies to:
+
+- Commands
+- Callback queries
+- Inline buttons
+- Deep links
+- Webhooks
+- Background actions
+- Administrative APIs
+
+Hiding an admin button is not an authorization mechanism.
+
+---
+
+7. Callback Handler Architecture
+
+Use a centralized callback dispatcher.
+
+Conceptually:
+
+Telegram Callback Query
+          │
+          ▼
+    Callback Router
+          │
+          ▼
+    Parse callback_data
+          │
+          ▼
+    Identify namespace
+          │
+     ┌────┴─────┐
+     ▼          ▼
+  PUBLIC      ADMIN
+     │          │
+     │          ▼
+     │    Authorization
+     │          │
+     │      ┌───┴───┐
+     │      ▼       ▼
+     │    DENY     ALLOW
+     │      │       │
+     │      ▼       ▼
+     │    Stop    Handler
+     │
+     ▼
+ Public Handler
+
+---
+
+8. Callback Naming Convention
+
+Use structured callback identifiers.
+
+Recommended format:
+
+<scope>:<action>:<identifier>
+
+Examples:
+
+public:menu
+public:help
+public:channel:info
+
+admin:menu
+admin:forward
+admin:destination:add
+admin:destination:remove
+admin:filter:trigger
+admin:filter:block
+admin:media
+admin:autocomplete
+admin:settings
+
+For an individual destination:
+
+admin:destination:view:123
+admin:destination:remove:123
+
+This makes callback routing predictable and easier to maintain.
+
+---
+
+9. Public Callback Handlers
+
+Public callbacks do not require administrative authorization.
+
+Example:
+
+public:menu
+public:help
+public:channel
+public:information
+
+Handler:
+
+callback
+   │
+   ▼
+Validate callback
+   │
+   ▼
+Public handler
+   │
+   ▼
+Answer callback
+   │
+   ▼
+Edit/send menu
+
+However, the callback should still validate the expected parameters and originating user/session where relevant.
+
+---
+
+10. Admin Callback Handlers
+
+Every admin callback must perform authorization.
+
+Example:
+
+admin:forward
+
+Processing:
+
+Callback
+   │
+   ▼
+Parse callback
+   │
+   ▼
+Is user authorized?
+   │
+ ┌─┴──────┐
+No        Yes
+│          │
+▼          ▼
+DENY     Handler
+│          │
+▼          ▼
+Log      Execute
+
+Unauthorized users should receive a generic response such as:
+
+⛔ You are not authorized to use this function.
+
+Do not expose internal permission details.
+
+---
+
+11. Channel-Based Authorization
+
+Since the configuration concerns Telegram channels, authorization should preferably be based on actual Telegram channel administrator/owner status, rather than merely maintaining a hard-coded list of Telegram user IDs.
+
+Conceptually:
+
+User
+ │
+ ▼
+Selected Channel
+ │
+ ▼
+Telegram Admin Status
+ │
+ ├── Owner       → Full access
+ │
+ ├── Admin       → Config access according to permissions
+ │
+ └── Member      → No admin access
+
+This prevents a user from retaining administrative access after they have been removed as a channel administrator.
+
+---
+
+12. Permission Model
+
+A more granular model can be used for administrators.
+
+Example:
+
+OWNER
+    ↓
+All permissions
+
+ADMIN
+    ↓
+Forward
+    ↓
+Destinations
+    ↓
+Filters
+    ↓
+Auto-complete
+    ↓
+Event log
+
+USER
+    ↓
+Public features only
+
+Permissions could be represented as:
+
+CAN_VIEW_ADMIN
+CAN_MANAGE_FORWARD
+CAN_MANAGE_DESTINATIONS
+CAN_MANAGE_FILTERS
+CAN_MANAGE_AUTOCOMPLETE
+CAN_VIEW_LOGS
+CAN_MANAGE_ADMINS
+CAN_MANAGE_SETTINGS
+
+---
+
+13. Owner vs Administrator
+
+The owner should have a special status.
+
+Example:
+
+OWNER
+
+The owner can:
+
+- Configure the bot.
+- Configure forwarding.
+- Add/remove destinations.
+- Configure filters.
+- Configure Auto-complete.
+- Configure custom bot.
+- Manage administrators.
+- Change security settings.
+
+An administrator may receive only selected permissions.
+
+The owner should not be removable through normal admin-management operations.
+
+---
+
+14. Main Bot Menu
+
+Recommended menu structure:
+
+/start
+
+🤖 Main Menu
+
+📢 Channel
+📚 Content
+ℹ️ Information
+🆘 Help
+
+If authorized:
+
+⚙️ Administration
+
+The Administration button should only be displayed to authorized users.
+
+Again, hiding the button is only a UX feature.
+
+The callback itself must still verify authorization.
+
+---
+
+15. Admin Dashboard
+
+Example:
+
+⚙️ ADMIN DASHBOARD
+
+Channel:
+@MainChannel
+
+Forward:
+🟢 Enabled
+
+Destinations:
+3 Channels
+4 Groups
+
+Filters:
+🟢 Enabled
+
+Auto-complete:
+🟢 Enabled
+
+Custom Bot:
+🟢 Connected
+
+[ 📣 Forward ]
+[ 🎯 Destinations ]
+[ 🔣 Filters ]
+[ ✍️ Auto-complete ]
+
+[ 🤖 Custom Bot ]
+[ 📋 Event Log ]
+[ 👥 Admins ]
+[ ⚙️ Settings ]
+
+[ ◀️ Back ]
+
+---
+
+16. Forwarding Configuration
+
+The admin flow should be:
+
+Admin
+ │
+ ▼
+Forward
+ │
+ ├── Enable / Disable
+ │
+ ├── Main Channel
+ │
+ ├── Secondary Channels
+ │
+ ├── Groups
+ │
+ ├── Copy Mode
+ │
+ ├── Custom Bot
+ │
+ └── Filters
+
+Only users with the required forwarding permission should access these controls.
+
+---
+
+17. Destination Management
+
+Admin menu:
+
+🎯 DESTINATIONS
+
+Channels:
+├── News Channel
+├── Promotions
+└── VIP
+
+Groups:
+├── Community
+├── Support
+└── Discussion
+
+[ ➕ Add Channel ]
+[ ➕ Add Group ]
+[ 🗑 Remove ]
+[ ◀️ Back ]
+
+Every modification should perform authorization again.
+
+Example:
+
+admin:destination:remove:123
+
+Processing:
+
+Callback
+ ↓
+Authenticate user
+ ↓
+Authorize destination management
+ ↓
+Validate destination ID
+ ↓
+Confirm deletion
+ ↓
+Delete destination
+ ↓
+Write event log
+
+---
+
+18. Confirmation Layer
+
+Destructive operations should require confirmation.
+
+For example:
+
+⚠️ Remove Community Group?
+
+This will stop automatic forwarding
+to this destination.
+
+[ ✅ Confirm ] [ ❌ Cancel ]
+
+Callbacks:
+
+admin:destination:delete:123
+admin:destination:delete_confirm:123
+admin:destination:delete_cancel:123
+
+Authorization must also occur on the confirmation callback.
+
+---
+
+19. Filter Configuration
+
+Admin flow:
+
+🔣 FILTERS
+
+Trigger Words
+Block Words
+Media Types
+
+[ 🔏 Trigger Words ]
+[ ⛔ Block Words ]
+[ 📸 Media Filter ]
+
+Trigger management:
+
+🔏 TRIGGER WORDS
+
+Current:
+• sale
+• promotion
+• announcement
+
+[ ➕ Add ]
+[ 🗑 Remove ]
+[ ◀️ Back ]
+
+Block management:
+
+⛔ BLOCK WORDS
+
+Current:
+• internal
+• draft
+
+[ ➕ Add ]
+[ 🗑 Remove ]
+[ ◀️ Back ]
+
+---
+
+20. Auto-complete Configuration
+
+✍️ AUTO-COMPLETE
+
+Status:
+🟢 Enabled
+
+Configured:
+✓ Signature
+✓ Buttons
+
+[ Enable / Disable ]
+[ Configure ]
+[ Preview ]
+[ ◀️ Back ]
+
+The Preview function is particularly useful because administrators can see how the forwarded message will look before enabling the configuration.
+
+---
+
+21. Event Log
+
+The event log should be accessible only to authorized administrators.
+
+Example:
+
+📋 EVENT LOG
+
+10:42:15
+Message #10482
+→ News Channel
+✓ Delivered
+
+10:42:16
+Message #10482
+→ Community Group
+✓ Delivered
+
+10:43:02
+Message #10483
+→ Support Group
+✗ Permission denied
+
+Useful event categories:
+
+FORWARD_SUCCESS
+FORWARD_FAILED
+FILTERED
+DESTINATION_ADDED
+DESTINATION_REMOVED
+CONFIG_CHANGED
+ADMIN_ADDED
+ADMIN_REMOVED
+BOT_CONNECTED
+BOT_DISCONNECTED
+
+---
+
+22. Admin Audit Logging
+
+Configuration changes should record:
+
+Admin User ID
+Admin Username
+Timestamp
+Action
+Object
+Previous Value
+New Value
+Result
+
+Example:
+
+Admin:
+123456789
+
+Action:
+DESTINATION_ADDED
+
+Destination:
+Community Group
+
+Time:
+2026-10-07 10:42 UTC
+
+Result:
+SUCCESS
+
+This provides an audit trail when multiple administrators manage the system.
+
+---
+
+23. Session State
+
+Some configuration workflows require multiple steps.
+
+Example:
+
+Admin selects:
+Add Trigger Word
+
+Bot:
+Send the new trigger word.
+
+Admin:
+sale
+
+Bot:
+Trigger "sale" added.
+
+The bot therefore needs temporary conversation state.
+
+Conceptually:
+
+User Session
+│
+├── user_id
+├── role
+├── current_menu
+├── current_action
+├── selected_channel
+├── selected_destination
+└── pending_confirmation
+
+State should be scoped to the user and expire after a reasonable period.
+
+---
+
+24. Callback Security
+
+Callback data should not contain secrets.
+
+Bad:
+
+admin:set_api_key:SECRET_VALUE
+
+Better:
+
+admin:settings:api_key
+
+Sensitive values should be handled through secure configuration flows and never exposed in callback identifiers.
+
+Callback IDs should also be validated against the user's authorization and the currently selected resource.
+
+---
+
+25. Anti-Tampering
+
+Never trust:
+
+callback_data
+user-submitted IDs
+channel IDs
+group IDs
+
+Validate all of them server-side.
+
+Example:
+
+User:
+admin:destination:remove:999
+
+Server:
+    Is user authorized?
+    Does destination 999 exist?
+    Does destination 999 belong to this configuration?
+    Is user allowed to remove it?
+
+Only after all checks pass should the deletion occur.
+
+---
+
+26. Complete Access-Control Flow
+
+The complete system becomes:
+
+                         TELEGRAM
+                            │
+                            ▼
+                         /start
+                            │
+                            ▼
+                    Authentication
+                            │
+                            ▼
+                     User Identity
+                            │
+                 ┌──────────┴──────────┐
+                 │                     │
+                 ▼                     ▼
+              PUBLIC                 ADMIN
+                 │                     │
+                 ▼                     ▼
+          Public Main Menu      Admin Dashboard
+                 │                     │
+                 ▼                     ▼
+        Public Callbacks       Admin Callbacks
+                                       │
+                                       ▼
+                              Authorization Check
+                                       │
+                              ┌────────┴────────┐
+                              │                 │
+                            DENY              ALLOW
+                              │                 │
+                              ▼                 ▼
+                            Stop             Execute
+                                                │
+                                                ▼
+                                           Audit Log
+
+---
+
+27. Recommended Command Structure
+
+A clean command structure would be:
+
+/start       → Main menu for everyone
+/help        → Public help
+/about       → Public information
+
+/admin       → Admin dashboard
+/settings    → Admin settings
+/log         → Admin event log
+
+Every administrative command must independently verify authorization.
+
+---
+
+28. Recommended Handler Structure
+
+Conceptually organize the bot code as:
+
+bot/
+│
+├── handlers/
+│   ├── start/
+│   │   └── start_handler
+│   │
+│   ├── public/
+│   │   ├── menu_handler
+│   │   ├── help_handler
+│   │   └── callback_handler
+│   │
+│   └── admin/
+│       ├── admin_handler
+│       ├── forward_handler
+│       ├── destination_handler
+│       ├── filter_handler
+│       ├── autocomplete_handler
+│       ├── settings_handler
+│       └── callback_handler
+│
+├── middleware/
+│   ├── authentication
+│   ├── authorization
+│   └── rate_limit
+│
+├── services/
+│   ├── forwarding
+│   ├── filtering
+│   ├── autocomplete
+│   ├── destination
+│   ├── telegram
+│   └── audit
+│
+├── models/
+│   ├── user
+│   ├── admin
+│   ├── channel
+│   ├── destination
+│   ├── filter
+│   └── event
+│
+└── config/
+    └── settings
+
+The exact framework can vary, but separating handlers, authorization, business logic, and persistence will prevent the callback handlers from becoming a monolithic codebase.
+
+---
+
+29. Middleware Model
+
+A strong implementation places authorization before administrative handlers.
+
+Telegram Update
+      │
+      ▼
+Authentication
+      │
+      ▼
+Authorization Middleware
+      │
+      ▼
+Handler
+      │
+      ▼
+Service Layer
+      │
+      ▼
+Database / Telegram API
+
+For public handlers:
+
+Authentication
+      │
+      ▼
+Public Handler
+
+For admin handlers:
+
+Authentication
+      │
+      ▼
+Admin Authorization
+      │
+      ▼
+Permission Check
+      │
+      ▼
+Admin Handler
+
+---
+
+30. Final Technical Checklist
+
+SOURCE
+
+[ ] Main channel identified
+[ ] ChannelHelp/forwarding controller administrator permissions verified
+[ ] Manual publishing workflow established
+
+PUBLIC BOT
+
+[ ] /start available to all users
+[ ] Public menu implemented
+[ ] Public callback handlers implemented
+[ ] Public commands implemented
+[ ] Public callbacks validated
+
+ADMIN ACCESS
+
+[ ] Owner identified
+[ ] Channel administrators detected
+[ ] Admin permissions defined
+[ ] /admin protected
+[ ] Admin callbacks protected
+[ ] Admin commands protected
+[ ] Unauthorized access rejected
+[ ] Admin actions audit logged
+
+DESTINATIONS
+
+[ ] Secondary channels configured
+[ ] Groups configured
+[ ] Custom bot configured where required
+[ ] Destination permissions verified
+
+PROCESSING
+
+[ ] Trigger rules tested
+[ ] Block rules tested
+[ ] Media rules tested
+[ ] Auto-complete tested
+[ ] Copy mode tested
+
+CALLBACK HANDLERS
+
+[ ] Callback router implemented
+[ ] Public namespace implemented
+[ ] Admin namespace implemented
+[ ] Callback parameters validated
+[ ] Resource ownership validated
+[ ] Destructive callbacks require confirmation
+[ ] Callback authorization checked server-side
+
+DELIVERY
+
+[ ] Channel delivery verified
+[ ] Group delivery verified
+[ ] Custom bot delivery verified
+[ ] Partial failures tested
+[ ] Retry behavior tested
+[ ] Delivery failures logged
+
+SECURITY
+
+[ ] Admin access restricted
+[ ] Bot permissions restricted
+[ ] Destination access reviewed
+[ ] Callback data contains no secrets
+[ ] User input validated
+[ ] Admin actions audited
+[ ] Session state protected
+[ ] Rate limiting considered
+
+OPERATIONS
+
+[ ] Event logging reviewed
+[ ] Failure procedure documented
+[ ] Recovery procedure documented
+[ ] Test matrix completed
+[ ] Production test completed
+[ ] Configuration backup/recovery procedure established
+
+31. Core Security Principle
+
+The most important rule for this architecture is:
+
+                 BUTTON VISIBILITY
+                       ≠
+                  AUTHORIZATION
+
+An administrator button can be hidden from normal users, but that does not protect the underlying function.
+
+The actual security boundary must be:
+
+Telegram User
+     │
+     ▼
+Identity
+     │
+     ▼
+Role
+     │
+     ▼
+Permission
+     │
+     ▼
+Resource Authorization
+     │
+     ▼
+Callback Handler
+     │
+     ▼
+Action
+
+Therefore, even if a normal user manually constructs:
+
+admin:forward
+admin:settings
+admin:destination:remove:123
+
+the server must reject the request unless that Telegram user is authorized for that operation.
+
+32. Recommended Final Architecture
+
+                         ┌───────────────────┐
+                         │     TELEGRAM      │
+                         └─────────┬─────────┘
+                                   │
+                             /start / callback
+                                   │
+                                   ▼
+                         ┌───────────────────┐
+                         │ AUTHENTICATION    │
+                         └─────────┬─────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │                             │
+                    ▼                             ▼
+             PUBLIC USER                    ADMIN / OWNER
+                    │                             │
+                    ▼                             ▼
+             PUBLIC MENU                  ADMIN DASHBOARD
+                    │                             │
+                    ▼                             ▼
+            PUBLIC CALLBACKS              ADMIN CALLBACKS
+                                                  │
+                                                  ▼
+                                         AUTHORIZATION
+                                                  │
+                                           ┌──────┴──────┐
+                                           ▼             ▼
+                                         DENY          ALLOW
+                                           │             │
+                                           ▼             ▼
+                                         STOP         SERVICES
+                                                         │
+                         ┌───────────────────────────────┼───────────────┐
+                         ▼                               ▼               ▼
+                    Forwarding                       Filters       Configuration
+                         │                               │               │
+                         └───────────────────────────────┼───────────────┘
+                                                         ▼
+                                                   DESTINATIONS
+                                                         │
+                                      ┌──────────────────┼──────────────────┐
+                                      ▼                  ▼                  ▼
+                                  Channel A           Channel B           Groups
+                                                                            │
+                                                                            ▼
+                                                                       Custom Bot
+                                                                            │
+                                                                            ▼
+                                                                         USERS
+
+                         All administrative actions
+                                   │
+                                   ▼
+                              AUDIT LOG
+
+This is the architecture I would recommend if the goal is a real production Telegram bot, rather than simply a collection of menu buttons. It cleanly separates public interaction from privileged configuration while making every administrative callback enforce authorization independently.
